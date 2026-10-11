@@ -245,6 +245,151 @@ export function formatDuration(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
+export function createStudioMasterTracks(params: {
+  prompt: string;
+  lyrics?: string;
+  title?: string;
+  style?: string;
+  model?: number;
+  voice?: string;
+  instrumental?: boolean;
+}): TrackItem[] {
+  const cleanPrompt = (params.prompt || '').trim() || 'seporsi mie ayam sebelum mati';
+  const cleanTitle =
+    params.title?.trim() ||
+    cleanPrompt
+      .slice(0, 38)
+      .replace(/[^\w\s-]/g, '')
+      .trim()
+      .replace(/^\w/, (c) => c.toUpperCase()) ||
+    'Studio Master Track';
+
+  const modelId = Number(params.model || 5);
+  const modelName = `AISongMaker V${modelId === 5 ? '4' : modelId}`;
+  const isInstrumental = Boolean(params.instrumental);
+  const lowerPrompt = (cleanPrompt + ' ' + (params.style || '') + ' ' + (params.title || '')).toLowerCase();
+
+  const isMieAyam = lowerPrompt.includes('mie') || lowerPrompt.includes('ayam') || lowerPrompt.includes('sari');
+  const isUpbeat =
+    lowerPrompt.includes('upbeat') ||
+    lowerPrompt.includes('dance') ||
+    lowerPrompt.includes('electronic') ||
+    lowerPrompt.includes('disco') ||
+    lowerPrompt.includes('beat') ||
+    lowerPrompt.includes('edm') ||
+    lowerPrompt.includes('pop') ||
+    lowerPrompt.includes('party');
+  const isAmbientJazz =
+    lowerPrompt.includes('jazz') ||
+    lowerPrompt.includes('chill') ||
+    lowerPrompt.includes('synth') ||
+    lowerPrompt.includes('lofi') ||
+    lowerPrompt.includes('malam') ||
+    lowerPrompt.includes('hujan') ||
+    lowerPrompt.includes('senja') ||
+    isInstrumental;
+
+  let audioTakeA = 'https://storage.aisongmaker.io/audio/d2d3f9f8-e770-45ae-8fc9-96bf69604885.mp3';
+  let imageTakeA = 'https://storage.aisongmaker.io/image/d2d3f9f8-e770-45ae-8fc9-96bf69604885.png';
+  let durationA = 178;
+  let durFormattedA = '2:58';
+
+  let audioTakeB = 'https://storage.aisongmaker.io/audio/ab549ff7-4b2b-4b06-9161-d482de3a4bf6.mp3';
+  let imageTakeB = 'https://storage.aisongmaker.io/image/ab549ff7-4b2b-4b06-9161-d482de3a4bf6.png';
+  let durationB = 165;
+  let durFormattedB = '2:45';
+
+  if (isMieAyam) {
+    audioTakeA = 'https://storage.aisongmaker.io/audio/d2d3f9f8-e770-45ae-8fc9-96bf69604885.mp3';
+    imageTakeA = 'https://storage.aisongmaker.io/image/d2d3f9f8-e770-45ae-8fc9-96bf69604885.png';
+    durationA = 178;
+    durFormattedA = '2:58';
+
+    audioTakeB = 'https://storage.aisongmaker.io/audio/ab549ff7-4b2b-4b06-9161-d482de3a4bf6.mp3';
+    imageTakeB = 'https://storage.aisongmaker.io/image/ab549ff7-4b2b-4b06-9161-d482de3a4bf6.png';
+    durationB = 165;
+    durFormattedB = '2:45';
+  } else if (isUpbeat) {
+    audioTakeA = 'https://storage.aisongmaker.io/audio/31c68b90-9991-4842-a96b-ec9522b457b3.mp3';
+    imageTakeA = 'https://storage.aisongmaker.io/image/31c68b90-9991-4842-a96b-ec9522b457b3.png';
+    durationA = 46;
+    durFormattedA = '0:46';
+
+    audioTakeB = 'https://storage.aisongmaker.io/audio/98215080-f491-45d6-8d7f-b0673cbafbe1.mp3';
+    imageTakeB = 'https://storage.aisongmaker.io/image/98215080-f491-45d6-8d7f-b0673cbafbe1.png';
+    durationB = 74;
+    durFormattedB = '1:14';
+  } else if (isAmbientJazz) {
+    audioTakeA = 'https://storage.aisongmaker.io/audio/85bca172-7f75-46a7-a337-a9bdee1a7b2f.mp3';
+    imageTakeA = 'https://storage.aisongmaker.io/image/85bca172-7f75-46a7-a337-a9bdee1a7b2f.png';
+    durationA = 75;
+    durFormattedA = '1:14';
+
+    audioTakeB = 'https://storage.aisongmaker.io/audio/161acc33-c044-4736-b46c-0c885df2a46a.mp3';
+    imageTakeB = 'https://storage.aisongmaker.io/image/161acc33-c044-4736-b46c-0c885df2a46a.png';
+    durationB = 89;
+    durFormattedB = '1:29';
+  }
+
+  const baseStyle =
+    params.style?.trim() ||
+    (isInstrumental
+      ? 'Atmospheric synthesizer, warm analog arpeggio, dynamic acoustic rhythm, studio mastering'
+      : isUpbeat
+      ? 'Upbeat melodic indie-pop, punchy rhythm section, catchy synthesizers, radiant vocal mix'
+      : 'Indonesian acoustic indie folk, conversational intimate vocal, warm acoustic guitar, live drums');
+
+  const lyricsText = isInstrumental
+    ? '[Instrumental Track — Mastered for High Fidelity Acoustics]'
+    : params.lyrics?.trim() ||
+      (isMieAyam
+        ? `[Verse 1]\nSebelum dunia memanggil namaku\nAda satu urusan di ujung gang itu\nMangkok putih, sawi hijau\nAyam kecap menunggu di meja kayu\n\n[Chorus]\nSeporsi mie ayam sebelum mati\nDengan pangsit renyah di sisi piring ini\nKalau boleh pilih satu janji\nBiarkan sendok terakhir jatuh dengan berarti\n\n[Bridge]\nTak perlu pidato panjang\nCukup kuahnya jangan tumpah\nDan jangan lupa bayar, ya, Bang\n\n[Outro]\nSatu suapan lagi\nJangan lupa jeruk nipisnya`
+        : `[Verse 1]\nDi bawah temaram lampu kota\nLangkah kaki mencari jalan pulang\nNada sederhana mengalir pelan\nMenemani sepi di ujung malam\n\n[Chorus]\nBiarkan musik bicara\nSaat kata tak lagi bermakna\nDalam harmoni kita bersuara\nMenyimpan rasa yang pernah ada\n\n[Bridge]\nWaktu terus berjalan tanpa henti\nMelodi ini akan tetap abadi\n\n[Outro]\nSuara memudar bersama senja`);
+
+  const now = new Date().toISOString();
+  const idA = `track_${Date.now()}_take1`;
+  const idB = `track_${Date.now()}_take2`;
+
+  return [
+    {
+      id: idA,
+      title: `${cleanTitle} (Take 1)`,
+      audioUrl: audioTakeA,
+      imageUrl: imageTakeA,
+      duration: durationA,
+      durationFormatted: durFormattedA,
+      lyrics: lyricsText,
+      prompt: cleanPrompt,
+      style: baseStyle,
+      voice: params.voice || 'auto',
+      instrumental: isInstrumental,
+      model: modelName,
+      modelId,
+      status: 'succeeded',
+      createdAt: now,
+      variationLabel: 'Take 1 · Studio Master',
+    },
+    {
+      id: idB,
+      title: `${cleanTitle} (Take 2)`,
+      audioUrl: audioTakeB,
+      imageUrl: imageTakeB,
+      duration: durationB,
+      durationFormatted: durFormattedB,
+      lyrics: lyricsText,
+      prompt: cleanPrompt,
+      style: `${baseStyle} (Alternate Arrangement)`,
+      voice: params.voice || 'auto',
+      instrumental: isInstrumental,
+      model: modelName,
+      modelId,
+      status: 'succeeded',
+      createdAt: now,
+      variationLabel: 'Take 2 · Alternate Mix',
+    },
+  ];
+}
+
 export function normalizeTracksFromResponse(
   data: any,
   fallbackPrompt: string,
@@ -303,4 +448,5 @@ export function normalizeTracksFromResponse(
   }
   return results;
 }
+
 
