@@ -331,10 +331,22 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // Global CORS and preflight handling for AI Studio iframe & preview environments
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-api-key');
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204);
+    }
+    next();
+  });
+
   app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
 
   // 1. Get available models and voices from Zettai API (with resilient fallback)
-  app.get('/api/genmusic/models', async (_req, res) => {
+  const handleModels = async (_req: express.Request, res: express.Response) => {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
@@ -368,18 +380,18 @@ async function startServer() {
       },
       defaultModel: 5,
     });
-  });
+  };
 
   // 2. Get initial studio tracks
-  app.get('/api/genmusic/showcase', (_req, res) => {
+  const handleShowcase = (_req: express.Request, res: express.Response) => {
     res.json({
       success: true,
       tracks: INITIAL_SHOWCASE_TRACKS,
     });
-  });
+  };
 
   // 3. Asynchronous Job Creation (Prevents browser 504 / Cloud Run idle timeout)
-  app.post('/api/genmusic/createJob', (req, res) => {
+  const handleCreateJob = (req: express.Request, res: express.Response) => {
     const {
       creationMode = 'textToSong',
       prompt = '',
@@ -392,14 +404,14 @@ async function startServer() {
       excludeStyles = '',
     } = req.body || {};
 
-    const cleanPrompt = String(prompt || '').trim();
-    const cleanLyrics = String(customLyrics || '').trim();
+    let cleanPrompt = String(prompt || '').trim();
+    let cleanLyrics = String(customLyrics || '').trim();
 
     if (creationMode === 'textToSong' && !cleanPrompt) {
-      return res.status(400).json({ success: false, error: 'Parameter prompt wajib diisi.' });
+      cleanPrompt = 'seporsi mie ayam sebelum mati';
     }
     if (creationMode === 'lyricsToSong' && !cleanLyrics) {
-      return res.status(400).json({ success: false, error: 'Parameter lirik (lyrics) wajib diisi.' });
+      cleanLyrics = INITIAL_SHOWCASE_TRACKS[0].lyrics;
     }
 
     const jobId = `job_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -489,10 +501,10 @@ async function startServer() {
         });
       }
     })();
-  });
+  };
 
   // 4. Poll Job Status
-  app.get('/api/genmusic/job/:jobId', (req, res) => {
+  const handleGetJob = (req: express.Request, res: express.Response) => {
     const job = jobs.get(req.params.jobId);
     if (!job) {
       return res.status(404).json({ success: false, error: 'Job ID tidak ditemukan atau telah kedaluwarsa.' });
@@ -503,7 +515,7 @@ async function startServer() {
       tracks: job.tracks,
       error: job.error,
     });
-  });
+  };
 
   // 5. Generate music via textToSong (Direct Synchronous Handler with Keep-Alive)
   const handleTextToSong = async (req: express.Request, res: express.Response) => {
@@ -635,8 +647,23 @@ async function startServer() {
     }
   };
 
-  app.get('/api/genmusic/lyricsToSong', handleLyricsToSong);
-  app.post('/api/genmusic/lyricsToSong', handleLyricsToSong);
+  const createJobPaths = ['/api/genmusic/createJob', '/genmusic/createJob', '/api/createJob', '/createJob'];
+  app.post(createJobPaths, handleCreateJob);
+
+  const getJobPaths = ['/api/genmusic/job/:jobId', '/genmusic/job/:jobId', '/api/job/:jobId', '/job/:jobId'];
+  app.get(getJobPaths, handleGetJob);
+
+  const textToSongPaths = ['/api/genmusic/textToSong', '/genmusic/textToSong', '/api/textToSong', '/textToSong'];
+  app.all(textToSongPaths, handleTextToSong);
+
+  const lyricsToSongPaths = ['/api/genmusic/lyricsToSong', '/genmusic/lyricsToSong', '/api/lyricsToSong', '/lyricsToSong'];
+  app.all(lyricsToSongPaths, handleLyricsToSong);
+
+  const modelsPaths = ['/api/genmusic/models', '/genmusic/models', '/api/models', '/models'];
+  app.get(modelsPaths, handleModels);
+
+  const showcasePaths = ['/api/genmusic/showcase', '/genmusic/showcase', '/api/showcase', '/showcase'];
+  app.get(showcasePaths, handleShowcase);
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
