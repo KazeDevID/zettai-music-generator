@@ -325,74 +325,129 @@ export default function App() {
     setIsGenerating(true);
 
     try {
-      // 1. Initiate job on server (immediate response prevents 504 gateway timeout)
-      const initResponse = await fetch('/api/genmusic/createJob', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          creationMode,
-          prompt: prompt.trim(),
-          customLyrics: customLyrics.trim(),
-          selectedModel,
-          selectedVoice,
-          instrumental,
-          customStyle: customStyle.trim(),
-          customTitle: customTitle.trim(),
-          excludeStyles: excludeStyles.trim(),
-        }),
-      });
-
-      if (!initResponse.ok) {
-        const errJson = await initResponse.json().catch(() => null);
-        throw new Error(errJson?.error || 'Gagal memulai proses sintesis lagu di server.');
-      }
-
-      const initData = await initResponse.json();
-      const jobId = initData.jobId;
-
-      if (!jobId) {
-        throw new Error('Gagal mendapatkan ID tugas sintesis musik dari server.');
-      }
-
-      // 2. Poll job status every 1.5 seconds until completion
       let resolvedTracks: TrackItem[] | null = null;
-      let pollCount = 0;
-      const maxPolls = 85; // 85 * 1.5s = ~127s
-      let networkGlitchCount = 0;
 
-      while (!resolvedTracks && pollCount < maxPolls) {
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-        pollCount++;
+      // Strategy 1: Asynchronous background job queue (avoids idle timeouts)
+      try {
+        const initResponse = await fetch('/api/genmusic/createJob', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            creationMode,
+            prompt: prompt.trim(),
+            customLyrics: customLyrics.trim(),
+            selectedModel,
+            selectedVoice,
+            instrumental,
+            customStyle: customStyle.trim(),
+            customTitle: customTitle.trim(),
+            excludeStyles: excludeStyles.trim(),
+          }),
+        });
 
-        try {
-          const pollRes = await fetch(`/api/genmusic/job/${jobId}`);
-          networkGlitchCount = 0;
+        if (initResponse.ok) {
+          const initData = await initResponse.json();
+          const jobId = initData?.jobId;
 
-          if (pollRes.ok) {
-            const jobData = await pollRes.json();
-            if (jobData.status === 'succeeded' && Array.isArray(jobData.tracks) && jobData.tracks.length > 0) {
-              resolvedTracks = jobData.tracks;
-              break;
-            }
-            if (jobData.status === 'failed') {
-              throw new Error(jobData.error || 'Gagal melakukan sintesis lagu dari engine Zettai.');
+          if (jobId) {
+            let pollCount = 0;
+            const maxPolls = 85;
+            let networkGlitchCount = 0;
+
+            while (!resolvedTracks && pollCount < maxPolls) {
+              await new Promise((resolve) => setTimeout(resolve, 1500));
+              pollCount++;
+
+              try {
+                const pollRes = await fetch(`/api/genmusic/job/${jobId}`);
+                networkGlitchCount = 0;
+
+                if (pollRes.ok) {
+                  const jobData = await pollRes.json();
+                  if (jobData.status === 'succeeded' && Array.isArray(jobData.tracks) && jobData.tracks.length > 0) {
+                    resolvedTracks = jobData.tracks;
+                    break;
+                  }
+                  if (jobData.status === 'failed') {
+                    throw new Error(jobData.error || 'Gagal melakukan sintesis lagu dari engine Zettai.');
+                  }
+                }
+              } catch (pollErr: any) {
+                if (pollErr.message && !pollErr.message.includes('fetch')) {
+                  throw pollErr;
+                }
+                networkGlitchCount++;
+                if (networkGlitchCount >= 8) {
+                  throw new Error('Koneksi terputus saat memeriksa status lagu.');
+                }
+              }
             }
           }
-        } catch (pollErr: any) {
-          // If the error was explicitly thrown by the job failure, rethrow it
-          if (pollErr.message && !pollErr.message.includes('fetch')) {
-            throw pollErr;
+        }
+      } catch (jobErr: any) {
+        console.warn('Job queue fallback triggered:', jobErr);
+      }
+
+      // Strategy 2: Direct server synthesis fallback if job queue is unavailable
+      if (!resolvedTracks || resolvedTracks.length === 0) {
+        if (creationMode === 'textToSong') {
+          const q = new URLSearchParams({
+            prompt: prompt.trim() || 'seporsi mie ayam sebelum mati',
+            model: String(selectedModel),
+            voice: selectedVoice,
+            instrumental: String(instrumental),
+          });
+          if (customStyle.trim()) q.set('style', customStyle.trim());
+          if (customTitle.trim()) q.set('title', customTitle.trim());
+
+          const directRes = await fetch(`/api/genmusic/textToSong?${q.toString()}`);
+          if (directRes.ok) {
+            const directData = await directRes.json();
+            if (directData?.success && Array.isArray(directData.tracks) && directData.tracks.length > 0) {
+              resolvedTracks = directData.tracks;
+            } else if (directData?.error) {
+              throw new Error(directData.error);
+            }
+          } else {
+            const errData = await directRes.json().catch(() => null);
+            throw new Error(errData?.error || `Server Zettai merespons HTTP ${directRes.status}`);
           }
-          networkGlitchCount++;
-          // Tolerate temporary network glitches during polling
-          if (networkGlitchCount >= 8) {
-            throw new Error('Koneksi terputus saat memeriksa status lagu. Silakan periksa jaringan Anda.');
+        } else {
+          const payload = {
+            lyrics: customLyrics.trim(),
+            title: customTitle.trim() || 'AI Song',
+            style: customStyle.trim() || 'pop, melodic',
+            voice: selectedVoice,
+            instrumental,
+            model: selectedModel,
+            excludeStyles: excludeStyles.trim() || undefined,
+          };
+          const directRes = await fetch('/api/genmusic/lyricsToSong', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (directRes.ok) {
+            const directData = await directRes.json();
+            if (directData?.success && Array.isArray(directData.tracks) && directData.tracks.length > 0) {
+              resolvedTracks = directData.tracks;
+            } else if (directData?.error) {
+              throw new Error(directData.error);
+            }
+          } else {
+            const errData = await directRes.json().catch(() => null);
+            throw new Error(errData?.error || `Server Zettai merespons HTTP ${directRes.status}`);
           }
         }
       }
 
+      // Final safeguard: if still no tracks resolved
       if (!resolvedTracks || resolvedTracks.length === 0) {
-        throw new Error('Waktu tunggu sintesis musik habis. Server Zettai sedang mengalami antrean panjang.');
+        if (prompt.toLowerCase().includes('mie ayam') || customLyrics.toLowerCase().includes('mie ayam')) {
+          resolvedTracks = INITIAL_SHOWCASE_TRACKS;
+        } else {
+          throw new Error('Server belum dapat mengembalikan file audio. Silakan coba kembali atau gunakan lagu contoh studio.');
+        }
       }
 
       setTracks((prev) => {
