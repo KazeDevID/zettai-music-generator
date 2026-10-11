@@ -1,0 +1,6 @@
+{
+  "name": "Zettai Studio — AI Music & Song Synthesis",
+  "description": "Studio produksi musik berbasis AI menggunakan Zettai Music Synthesis Engine (AISongMaker V1–V4). Ubah deskripsi teks atau lirik kustom menjadi lagu utuh dengan vokal dan aransemen profesional.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
