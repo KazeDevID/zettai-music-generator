@@ -141,11 +141,7 @@ export default function App() {
         const [modelsRes, showcaseRes] = await Promise.all([
           fetch('/api/genmusic/models')
             .then((r) => (r.ok ? r.json() : null))
-            .catch(() =>
-              fetch('https://zettai.my.id/api/v1/genmusic/models?apikey=zet_free100')
-                .then((r) => r.json())
-                .catch(() => null)
-            ),
+            .catch(() => null),
           fetch('/api/genmusic/showcase')
             .then((r) => (r.ok ? r.json() : null))
             .catch(() => null),
@@ -329,109 +325,94 @@ export default function App() {
     setIsGenerating(true);
 
     try {
-      let data: any = null;
-
-      if (creationMode === 'textToSong') {
-        const query = new URLSearchParams({
+      // 1. Initiate job on server (immediate response prevents 504 gateway timeout)
+      const initResponse = await fetch('/api/genmusic/createJob', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          creationMode,
           prompt: prompt.trim(),
-          model: String(selectedModel),
-          voice: selectedVoice,
-          instrumental: String(instrumental),
-        });
-        if (customStyle.trim()) query.set('style', customStyle.trim());
-        if (customTitle.trim()) query.set('title', customTitle.trim());
-
-        try {
-          const response = await fetch(`/api/genmusic/textToSong?${query.toString()}`);
-          if (response.ok) {
-            data = await response.json();
-          } else if (response.status === 504 || response.status === 502 || response.status === 500) {
-            throw new Error('Gateway timeout on proxy');
-          } else {
-            const errData = await response.json().catch(() => null);
-            throw new Error(errData?.error || 'Gagal menghasilkan lagu.');
-          }
-        } catch (proxyErr: any) {
-          // Resilient fallback directly to Zettai API (supported via CORS Access-Control-Allow-Origin: *)
-          query.set('apikey', 'zet_free100');
-          const directRes = await fetch(`https://zettai.my.id/api/v1/genmusic/textToSong?${query.toString()}`);
-          data = await directRes.json();
-          if (data && data.success && !data.tracks) {
-            data.tracks = normalizeTracksFromResponse(data, prompt.trim(), selectedModel, selectedVoice, instrumental);
-          }
-        }
-      } else {
-        const payload: Record<string, any> = {
-          lyrics: customLyrics.trim(),
-          title: customTitle.trim() || 'Lagu Kustom',
-          style: customStyle.trim() || 'indonesian pop, melodic, warm production',
-          voice: selectedVoice,
+          customLyrics: customLyrics.trim(),
+          selectedModel,
+          selectedVoice,
           instrumental,
-          model: selectedModel,
-          excludeStyles: excludeStyles.trim() || undefined,
-        };
+          customStyle: customStyle.trim(),
+          customTitle: customTitle.trim(),
+          excludeStyles: excludeStyles.trim(),
+        }),
+      });
+
+      if (!initResponse.ok) {
+        const errJson = await initResponse.json().catch(() => null);
+        throw new Error(errJson?.error || 'Gagal memulai proses sintesis lagu di server.');
+      }
+
+      const initData = await initResponse.json();
+      const jobId = initData.jobId;
+
+      if (!jobId) {
+        throw new Error('Gagal mendapatkan ID tugas sintesis musik dari server.');
+      }
+
+      // 2. Poll job status every 1.5 seconds until completion
+      let resolvedTracks: TrackItem[] | null = null;
+      let pollCount = 0;
+      const maxPolls = 85; // 85 * 1.5s = ~127s
+      let networkGlitchCount = 0;
+
+      while (!resolvedTracks && pollCount < maxPolls) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        pollCount++;
 
         try {
-          const response = await fetch('/api/genmusic/lyricsToSong', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-          if (response.ok) {
-            data = await response.json();
-          } else if (response.status === 504 || response.status === 502 || response.status === 500) {
-            throw new Error('Gateway timeout on proxy');
-          } else {
-            const errData = await response.json().catch(() => null);
-            throw new Error(errData?.error || 'Gagal menghasilkan lagu.');
+          const pollRes = await fetch(`/api/genmusic/job/${jobId}`);
+          networkGlitchCount = 0;
+
+          if (pollRes.ok) {
+            const jobData = await pollRes.json();
+            if (jobData.status === 'succeeded' && Array.isArray(jobData.tracks) && jobData.tracks.length > 0) {
+              resolvedTracks = jobData.tracks;
+              break;
+            }
+            if (jobData.status === 'failed') {
+              throw new Error(jobData.error || 'Gagal melakukan sintesis lagu dari engine Zettai.');
+            }
           }
-        } catch (proxyErr: any) {
-          // Direct fallback for lyricsToSong
-          const directRes = await fetch('https://zettai.my.id/api/v1/genmusic/lyricsToSong?apikey=zet_free100', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-          data = await directRes.json();
-          if (data && data.success && !data.tracks) {
-            data.tracks = normalizeTracksFromResponse(
-              data,
-              customLyrics.trim().slice(0, 80),
-              selectedModel,
-              selectedVoice,
-              instrumental
-            );
+        } catch (pollErr: any) {
+          // If the error was explicitly thrown by the job failure, rethrow it
+          if (pollErr.message && !pollErr.message.includes('fetch')) {
+            throw pollErr;
+          }
+          networkGlitchCount++;
+          // Tolerate temporary network glitches during polling
+          if (networkGlitchCount >= 8) {
+            throw new Error('Koneksi terputus saat memeriksa status lagu. Silakan periksa jaringan Anda.');
           }
         }
       }
 
-      if (!data || !data.success) {
-        throw new Error(data?.error || data?.message || 'Gagal menghasilkan lagu dari Zettai API.');
-      }
-
-      const newTracks: TrackItem[] = Array.isArray(data.tracks) ? data.tracks : [];
-      if (newTracks.length === 0) {
-        throw new Error('Server berhasil merespons tetapi tidak ada file audio yang dikembalikan.');
+      if (!resolvedTracks || resolvedTracks.length === 0) {
+        throw new Error('Waktu tunggu sintesis musik habis. Server Zettai sedang mengalami antrean panjang.');
       }
 
       setTracks((prev) => {
-        const existingIds = new Set( newTracks.map((t) => t.id) );
+        const existingIds = new Set(resolvedTracks!.map((t) => t.id));
         const filteredPrev = prev.filter((p) => !existingIds.has(p.id));
-        const combined = [...newTracks, ...filteredPrev];
+        const combined = [...resolvedTracks!, ...filteredPrev];
         saveTracksToStorage(combined);
         return combined;
       });
 
       // Automatically select and play the newly synthesized track
-      setSelectedTrackId(newTracks[0].id);
+      setSelectedTrackId(resolvedTracks[0].id);
       setIsPlaying(true);
       if (audioRef.current) {
-        audioRef.current.src = newTracks[0].audioUrl;
+        audioRef.current.src = resolvedTracks[0].audioUrl;
         audioRef.current.load();
         audioRef.current.play().catch(() => setIsPlaying(false));
       }
     } catch (err: any) {
-      setErrorMessage(err?.message || 'Terjadi gangguan jaringan saat memproses lagu.');
+      setErrorMessage(err?.message || 'Terjadi gangguan saat memproses sintesis lagu.');
     } finally {
       setIsGenerating(false);
     }
@@ -892,6 +873,42 @@ export default function App() {
                     <div className="flex-1">
                       <p className="font-semibold text-red-300">Gagal Memproses Permintaan</p>
                       <p className="mt-0.5 text-red-200/90">{errorMessage}</p>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setErrorMessage(null);
+                            const fakeEvent = { preventDefault: () => {} } as React.FormEvent;
+                            handleGenerateMusic(fakeEvent);
+                          }}
+                          className="px-3 py-1.5 rounded-md bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-xs transition-colors cursor-pointer"
+                        >
+                          Coba Lagi Sekarang
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setErrorMessage(null);
+                            setTracks((prev) => {
+                              const existingIds = new Set(INITIAL_SHOWCASE_TRACKS.map((t) => t.id));
+                              const filtered = prev.filter((p) => !existingIds.has(p.id));
+                              const combined = [...INITIAL_SHOWCASE_TRACKS, ...filtered];
+                              saveTracksToStorage(combined);
+                              return combined;
+                            });
+                            setSelectedTrackId(INITIAL_SHOWCASE_TRACKS[0].id);
+                            setIsPlaying(true);
+                            if (audioRef.current) {
+                              audioRef.current.src = INITIAL_SHOWCASE_TRACKS[0].audioUrl;
+                              audioRef.current.load();
+                              audioRef.current.play().catch(() => setIsPlaying(false));
+                            }
+                          }}
+                          className="px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition-colors cursor-pointer"
+                        >
+                          Muat Lagu Contoh Studio Master
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}
